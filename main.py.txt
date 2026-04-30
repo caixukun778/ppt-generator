@@ -1,0 +1,202 @@
+import os
+import uuid
+import json
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
+from pptx.dml.color import RGBColor
+
+app = FastAPI()
+
+# 创建输出目录
+OUTPUT_DIR = "outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+# ========== 请求体定义 ==========
+
+class StyleConfig(BaseModel):
+    primary_color: str = "深蓝色"
+    visual_style: str = "科技感扁平化"
+    font: str = "微软雅黑"
+    animation: bool = False
+
+class SlideData(BaseModel):
+    page: int
+    type: str = "content"          # cover / toc / content
+    title: str = ""
+    subtitle: str = ""
+    items: list = []               # 用于目录页
+    section_title: str = ""        # 用于内容页的大标题
+    blocks: list = []              # 内容块，每个块有 heading + bullets
+
+class PPTRequest(BaseModel):
+    title: str
+    style: StyleConfig
+    slides: list = []
+
+
+# ========== 颜色映射 ==========
+
+COLOR_MAP = {
+    "深蓝色": RGBColor(0, 51, 102),
+    "蓝色": RGBColor(0, 102, 204),
+    "科技蓝": RGBColor(0, 153, 255),
+    "灰色": RGBColor(128, 128, 128),
+    "深灰色": RGBColor(64, 64, 64),
+    "白色": RGBColor(255, 255, 255),
+    "黑色": RGBColor(0, 0, 0),
+}
+
+def get_color(name: str) -> RGBColor:
+    """根据名称获取颜色，默认返回深蓝色"""
+    for key, value in COLOR_MAP.items():
+        if key in name:
+            return value
+    return RGBColor(0, 51, 102)
+
+
+# ========== 构建 PPT ==========
+
+def build_pptx(request: PPTRequest):
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)   # 16:9 宽屏
+    prs.slide_height = Inches(7.5)
+
+    primary_color = get_color(request.style.primary_color)
+
+    for slide_data in request.slides:
+        slide_type = slide_data.type
+
+        if slide_type == "cover":
+            # 封面：用空白版式
+            slide_layout = prs.slide_layouts[6]   # blank
+            slide = prs.slides.add_slide(slide_layout)
+
+            # 背景色
+            background = slide.background
+            fill = background.fill
+            fill.solid()
+            fill.fore_color.rgb = primary_color
+
+            # 标题
+            left = Inches(1)
+            top = Inches(3)
+            width = Inches(11)
+            height = Inches(1.5)
+            txBox = slide.shapes.add_textbox(left, top, width, height)
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = slide_data.title or request.title
+            p.font.size = Pt(44)
+            p.font.color.rgb = RGBColor(255, 255, 255)
+            p.font.bold = True
+            p.alignment = PP_ALIGN.CENTER
+
+            # 副标题
+            if slide_data.subtitle:
+                left2 = Inches(1)
+                top2 = Inches(5)
+                txBox2 = slide.shapes.add_textbox(left2, top2, width, Inches(1))
+                tf2 = txBox2.text_frame
+                p2 = tf2.paragraphs[0]
+                p2.text = slide_data.subtitle
+                p2.font.size = Pt(24)
+                p2.font.color.rgb = RGBColor(220, 220, 220)
+                p2.alignment = PP_ALIGN.CENTER
+
+        elif slide_type == "toc":
+            # 目录页
+            slide_layout = prs.slide_layouts[1]   # 标题和内容
+            slide = prs.slides.add_slide(slide_layout)
+            slide.shapes.title.text = "目录"
+
+            body = slide.shapes.placeholders[1].text_frame
+            body.clear()
+            items = slide_data.items or []
+            for i, item in enumerate(items):
+                p = body.add_paragraph()
+                p.text = f"{i+1}.  {item}"
+                p.font.size = Pt(22)
+                p.font.color.rgb = primary_color
+                p.space_after = Pt(12)
+
+        else:
+            # 普通内容页
+            slide_layout = prs.slide_layouts[1]   # 标题和内容
+            slide = prs.slides.add_slide(slide_layout)
+
+            page_title = slide_data.section_title or slide_data.title
+            slide.shapes.title.text = page_title
+
+            body = slide.shapes.placeholders[1].text_frame
+            body.clear()
+
+            blocks = slide_data.blocks or []
+            if not blocks and slide_data.items:
+                # 兼容只有 items 没有 blocks 的情况
+                blocks = [{"heading": "", "bullets": slide_data.items}]
+
+            for block in blocks:
+                # 小标题
+                if block.get("heading"):
+                    p = body.add_paragraph()
+                    p.text = block["heading"]
+                    p.font.size = Pt(20)
+                    p.font.bold = True
+                    p.font.color.rgb = primary_color
+                    p.space_after = Pt(8)
+
+                # 要点
+                bullets = block.get("bullets", [])
+                for bullet in bullets:
+                    p = body.add_paragraph()
+                    p.text = f"•  {bullet}"
+                    p.font.size = Pt(16)
+                    p.font.color.rgb = RGBColor(64, 64, 64)
+                    p.space_after = Pt(4)
+                    p.level = 0
+
+    # 保存
+    filename = f"{uuid.uuid4()}.pptx"
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    prs.save(filepath)
+    return filepath, filename
+
+
+# ========== API 端点 ==========
+
+@app.post("/generate_pptx")
+async def generate_pptx(request: PPTRequest):
+    try:
+        filepath, filename = build_pptx(request)
+        download_url = f"/download/{filename}"
+        return {
+            "success": True,
+            "download_url": download_url,
+            "preview_images": []
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="文件不存在或已过期")
+    return FileResponse(filepath, filename=filename)
+
+
+# ========== 健康检查 ==========
+
+@app.get("/")
+def root():
+    return {"status": "running", "service": "PPT Generator API"}
