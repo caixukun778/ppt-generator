@@ -1,16 +1,14 @@
-import os
+import io
 import uuid
 import json
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 
 app = FastAPI()
-OUTPUT_DIR = "outputs"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 COLOR_MAP = {
     "深蓝色": RGBColor(0, 51, 102),
@@ -28,7 +26,7 @@ def get_color(name: str) -> RGBColor:
             return value
     return RGBColor(0, 51, 102)
 
-def build_pptx(title: str, style_desc: str, slides_json_str: str):
+def build_pptx_to_bytes(title: str, style_desc: str, slides_json_str: str) -> io.BytesIO:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
@@ -52,7 +50,6 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
             fill = bg.fill
             fill.solid()
             fill.fore_color.rgb = primary_color
-
             txBox = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(11), Inches(1.5))
             tf = txBox.text_frame
             p = tf.paragraphs[0]
@@ -61,7 +58,6 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
             p.font.color.rgb = RGBColor(255, 255, 255)
             p.font.bold = True
             p.alignment = PP_ALIGN.CENTER
-
             sub = slide_data.get("subtitle", "")
             if sub:
                 txBox2 = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(11), Inches(1))
@@ -75,10 +71,8 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
             slide.shapes.title.text = slide_data.get("title", "内容")
             body = slide.shapes.placeholders[1].text_frame
             body.clear()
-
             blocks = slide_data.get("blocks", [])
             items = slide_data.get("items", [])
-
             if blocks:
                 for block in blocks:
                     h = block.get("heading", "")
@@ -101,10 +95,10 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
                     p.font.size = Pt(16)
                     p.space_after = Pt(4)
 
-    filename = f"{uuid.uuid4()}.pptx"
-    filepath = os.path.join(OUTPUT_DIR, filename)
-    prs.save(filepath)
-    return filepath, filename
+    output = io.BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
 
 @app.post("/generate_pptx")
 async def generate_pptx(request: Request):
@@ -113,26 +107,18 @@ async def generate_pptx(request: Request):
         title = data.get("title", "PPT")
         style_desc = data.get("style", "")
         slides_str = data.get("slides", "[]")
-
-        filepath, filename = build_pptx(title, style_desc, slides_str)
-        download_url = f"/download/{filename}"
-        return {
-            "success": True,
-            "download_url": download_url
-        }
+        pptx_bytes = build_pptx_to_bytes(title, style_desc, slides_str)
+        safe_title = title.replace(" ", "_").replace("/", "_")
+        filename = f"{safe_title}_{uuid.uuid4().hex[:8]}.pptx"
+        return StreamingResponse(
+            pptx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
-@app.get("/download/{filename}")
-async def download_file(filename: str):
-    filepath = os.path.join(OUTPUT_DIR, filename)
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(filepath, filename=filename)
-
+# 健康检查
 @app.get("/")
 def root():
-    return {"status": "running", "service": "PPT Generator API"}
+    return {"status": "running"}
