@@ -1,23 +1,24 @@
-import io
+import os
 import uuid
 import json
+import time
+import threading
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 
 app = FastAPI()
+OUTPUT_DIR = "outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 COLOR_MAP = {
     "深蓝色": RGBColor(0, 51, 102),
     "蓝色": RGBColor(0, 102, 204),
     "科技蓝": RGBColor(0, 153, 255),
     "灰色": RGBColor(128, 128, 128),
-    "深灰色": RGBColor(64, 64, 64),
-    "白色": RGBColor(255, 255, 255),
-    "黑色": RGBColor(0, 0, 0),
 }
 
 def get_color(name: str) -> RGBColor:
@@ -26,7 +27,7 @@ def get_color(name: str) -> RGBColor:
             return value
     return RGBColor(0, 51, 102)
 
-def build_pptx_to_bytes(title: str, style_desc: str, slides_json_str: str) -> io.BytesIO:
+def build_pptx(title: str, style_desc: str, slides_json_str: str):
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
@@ -51,8 +52,7 @@ def build_pptx_to_bytes(title: str, style_desc: str, slides_json_str: str) -> io
             fill.solid()
             fill.fore_color.rgb = primary_color
             txBox = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(11), Inches(1.5))
-            tf = txBox.text_frame
-            p = tf.paragraphs[0]
+            p = txBox.text_frame.paragraphs[0]
             p.text = slide_data.get("title", title)
             p.font.size = Pt(44)
             p.font.color.rgb = RGBColor(255, 255, 255)
@@ -61,8 +61,7 @@ def build_pptx_to_bytes(title: str, style_desc: str, slides_json_str: str) -> io
             sub = slide_data.get("subtitle", "")
             if sub:
                 txBox2 = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(11), Inches(1))
-                tf2 = txBox2.text_frame
-                p2 = tf2.paragraphs[0]
+                p2 = txBox2.text_frame.paragraphs[0]
                 p2.text = sub
                 p2.font.size = Pt(24)
                 p2.font.color.rgb = RGBColor(220, 220, 220)
@@ -95,10 +94,18 @@ def build_pptx_to_bytes(title: str, style_desc: str, slides_json_str: str) -> io
                     p.font.size = Pt(16)
                     p.space_after = Pt(4)
 
-    output = io.BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return output
+    filename = f"{uuid.uuid4()}.pptx"
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    prs.save(filepath)
+    return filepath, filename
+
+def delete_file_later(filepath: str, delay: int = 300):
+    """延迟删除文件（默认5分钟）"""
+    def _del():
+        time.sleep(delay)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    threading.Thread(target=_del, daemon=True).start()
 
 @app.post("/generate_pptx")
 async def generate_pptx(request: Request):
@@ -107,18 +114,29 @@ async def generate_pptx(request: Request):
         title = data.get("title", "PPT")
         style_desc = data.get("style", "")
         slides_str = data.get("slides", "[]")
-        pptx_bytes = build_pptx_to_bytes(title, style_desc, slides_str)
-        safe_title = title.replace(" ", "_").replace("/", "_")
-        filename = f"{safe_title}_{uuid.uuid4().hex[:8]}.pptx"
-        return StreamingResponse(
-            pptx_bytes,
-            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
+        
+        filepath, filename = build_pptx(title, style_desc, slides_str)
+        # 5分钟后自动删除文件
+        delete_file_later(filepath, delay=300)
+        
+        download_url = f"/download/{filename}"
+        return {
+            "success": True,
+            "download_url": download_url
+        }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
-# 健康检查
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found or expired")
+    return FileResponse(filepath, filename=filename)
+
 @app.get("/")
 def root():
     return {"status": "running"}
