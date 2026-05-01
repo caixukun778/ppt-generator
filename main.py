@@ -1,22 +1,21 @@
-import io
+import os
+import uuid
 import json
-import base64
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
 
 app = FastAPI()
+OUTPUT_DIR = "outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 COLOR_MAP = {
     "深蓝色": RGBColor(0, 51, 102),
     "蓝色": RGBColor(0, 102, 204),
     "科技蓝": RGBColor(0, 153, 255),
-    "灰色": RGBColor(128, 128, 128),
-    "深灰色": RGBColor(64, 64, 64),
-    "白色": RGBColor(255, 255, 255),
-    "黑色": RGBColor(0, 0, 0),
 }
 
 def get_color(name: str) -> RGBColor:
@@ -25,7 +24,7 @@ def get_color(name: str) -> RGBColor:
             return value
     return RGBColor(0, 51, 102)
 
-def build_pptx_base64(title: str, style_desc: str, slides_json_str: str) -> str:
+def build_pptx(title: str, style_desc: str, slides_json_str: str):
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
@@ -92,10 +91,10 @@ def build_pptx_base64(title: str, style_desc: str, slides_json_str: str) -> str:
                     p.font.size = Pt(16)
                     p.space_after = Pt(4)
 
-    output = io.BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return base64.b64encode(output.read()).decode("utf-8")
+    filename = f"{uuid.uuid4()}.pptx"
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    prs.save(filepath)
+    return filepath, filename
 
 @app.post("/generate_pptx")
 async def generate_pptx(request: Request):
@@ -105,18 +104,25 @@ async def generate_pptx(request: Request):
         style_desc = data.get("style", "")
         slides_str = data.get("slides", "[]")
         
-        pptx_base64 = build_pptx_base64(title, style_desc, slides_str)
-        
+        filepath, filename = build_pptx(title, style_desc, slides_str)
+        download_url = f"/download/{filename}"
         return {
             "success": True,
-            "file_base64": pptx_base64,
-            "file_name": f"{title}.pptx"
+            "download_url": download_url,
+            "file_name": filename
         }
     except Exception as e:
         return {
             "success": False,
             "error": str(e)
         }
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found or expired")
+    return FileResponse(filepath, filename=filename)
 
 @app.get("/")
 def root():
