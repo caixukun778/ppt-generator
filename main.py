@@ -188,23 +188,6 @@ async def upload_image(request: Request, tag: str = ""):
         return {"success": True, "image_url": f"/uploads/{save_name}", "id": save_name}
     except Exception as e:
         return {"success": False, "error": str(e)}
-        
-@app.get("/list_images")
-async def list_images(tag: str = ""):
-    """查看图片列表，可按标签筛选"""
-    try:
-        with open(IMAGES_DB, "r", encoding="utf-8") as f:
-            images = json.load(f)
-        
-        if tag:
-            images = [img for img in images if img.get("tag") == tag]
-        
-        for img in images:
-            img["full_url"] = f"https://ppt-generator-production-a9fd.up.railway.app{img['url']}"
-        
-        return {"success": True, "images": images, "count": len(images)}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 @app.get("/list_images")
 async def list_images(tag: str = ""):
     """查看图片列表，可按标签筛选"""
