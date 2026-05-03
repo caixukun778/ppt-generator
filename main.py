@@ -1,7 +1,9 @@
 import os
 import uuid
 import json
-from fastapi import FastAPI, HTTPException, Request
+import shutil
+import time
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import FileResponse
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -123,7 +125,73 @@ async def download_file(filename: str):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found or expired")
     return FileResponse(filepath, filename=filename)
+    
+# ========== 素材库 ==========
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+IMAGES_DB = "images_db.json"
+if not os.path.exists(IMAGES_DB):
+    with open(IMAGES_DB, "w", encoding="utf-8") as f:
+        json.dump([], f)
+
+
+@app.post("/upload_image")
+async def upload_image(file: UploadFile = FastAPIFile(...), tag: str = ""):
+    """上传图片，可选标签分类"""
+    try:
+        ext = file.filename.split(".")[-1] if "." in file.filename else "png"
+        save_name = f"{uuid.uuid4()}.{ext}"
+        save_path = os.path.join(UPLOAD_DIR, save_name)
+        
+        with open(save_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        
+        with open(IMAGES_DB, "r", encoding="utf-8") as f:
+            images = json.load(f)
+        
+        images.append({
+            "id": save_name,
+            "original_name": file.filename,
+            "tag": tag,
+            "url": f"/uploads/{save_name}",
+            "uploaded_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+        
+        with open(IMAGES_DB, "w", encoding="utf-8") as f:
+            json.dump(images, f, ensure_ascii=False, indent=2)
+        
+        return {"success": True, "image_url": f"/uploads/{save_name}", "id": save_name}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/list_images")
+async def list_images(tag: str = ""):
+    """查看图片列表，可按标签筛选"""
+    try:
+        with open(IMAGES_DB, "r", encoding="utf-8") as f:
+            images = json.load(f)
+        
+        if tag:
+            images = [img for img in images if img.get("tag") == tag]
+        
+        for img in images:
+            img["full_url"] = f"https://ppt-generator-production-a9fd.up.railway.app{img['url']}"
+        
+        return {"success": True, "images": images, "count": len(images)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/uploads/{filename}")
+async def get_uploaded_file(filename: str):
+    """访问上传的图片"""
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(filepath)
+    
 @app.get("/")
 def root():
     return {"status": "running"}
