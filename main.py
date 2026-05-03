@@ -4,7 +4,7 @@ import json
 import shutil
 import time
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import FileResponse
 from pptx import Presentation
 from pptx.util import Inches, Pt
