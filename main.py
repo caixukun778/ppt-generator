@@ -204,6 +204,13 @@ async def list_images(tag: str = ""):
         return {"success": True, "images": images, "count": len(images)}
     except Exception as e:
         return {"success": False, "error": str(e)}
+@app.get("/uploads/{filename}")
+async def get_uploaded_file(filename: str):
+    """访问上传的图片"""
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(filepath)
 @app.get("/")
 def root():
     return {"status": "running"}
