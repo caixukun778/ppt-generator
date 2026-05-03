@@ -4,7 +4,7 @@ import json
 import shutil
 import time
 import httpx
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File as FastAPIFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -15,10 +15,15 @@ app = FastAPI()
 OUTPUT_DIR = "outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# ========== 颜色映射 ==========
 COLOR_MAP = {
     "深蓝色": RGBColor(0, 51, 102),
     "蓝色": RGBColor(0, 102, 204),
     "科技蓝": RGBColor(0, 153, 255),
+    "灰色": RGBColor(128, 128, 128),
+    "深灰色": RGBColor(64, 64, 64),
+    "白色": RGBColor(255, 255, 255),
+    "黑色": RGBColor(0, 0, 0),
 }
 
 def get_color(name: str) -> RGBColor:
@@ -27,6 +32,8 @@ def get_color(name: str) -> RGBColor:
             return value
     return RGBColor(0, 51, 102)
 
+
+# ========== PPT 生成核心 ==========
 def build_pptx(title: str, style_desc: str, slides_json_str: str):
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -99,6 +106,7 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
     prs.save(filepath)
     return filepath, filename
 
+
 @app.post("/generate_pptx")
 async def generate_pptx(request: Request):
     try:
@@ -106,19 +114,12 @@ async def generate_pptx(request: Request):
         title = data.get("title", "PPT")
         style_desc = data.get("style", "")
         slides_str = data.get("slides", "[]")
-        
         filepath, filename = build_pptx(title, style_desc, slides_str)
         download_url = f"/download/{filename}"
-        return {
-            "success": True,
-            "download_url": download_url,
-            "file_name": filename
-        }
+        return {"success": True, "download_url": download_url}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
+
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
@@ -126,7 +127,8 @@ async def download_file(filename: str):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="File not found or expired")
     return FileResponse(filepath, filename=filename)
-    
+
+
 # ========== 素材库 ==========
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -137,73 +139,70 @@ if not os.path.exists(IMAGES_DB):
         json.dump([], f)
 
 
-import httpx  # 需要新增这个导入，用于下载链接
-
 @app.post("/upload_image")
-async def upload_image(request: Request, tag: str = ""):
-    """上传图片，支持直接传文件或传图片链接"""
+async def upload_image(request: Request):
+    """上传图片：接收JSON中的图片链接并下载保存"""
     try:
-        form = await request.form()
-        file = form.get("file")
-        
-        if file and hasattr(file, "filename"):
-            ext = file.filename.split(".")[-1] if "." in file.filename else "png"
+        data = await request.json()
+        image_url = data.get("image_url") or data.get("file")
+        tag = data.get("tag", "")
+
+        if not image_url:
+            return {"success": False, "error": "请在 image_url 参数中提供图片链接"}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(image_url)
+            if response.status_code != 200:
+                return {"success": False, "error": f"下载图片失败，状态码: {response.status_code}"}
+
+            content_type = response.headers.get("content-type", "")
+            ext = "png"
+            if "jpeg" in content_type or "jpg" in content_type:
+                ext = "jpg"
+            elif "webp" in content_type:
+                ext = "webp"
+
             save_name = f"{uuid.uuid4()}.{ext}"
             save_path = os.path.join(UPLOAD_DIR, save_name)
             with open(save_path, "wb") as f:
-                f.write(await file.read())
-        else:
-            data = await request.json()
-            image_url = data.get("file") or data.get("image_url")
-            if not image_url:
-                return {"success": False, "error": "未提供图片文件或链接"}
-            async with httpx.AsyncClient() as client:
-                response = await client.get(image_url)
-                if response.status_code != 200:
-                    return {"success": False, "error": f"下载图片失败，状态码: {response.status_code}"}
-                content_type = response.headers.get("content-type", "")
-                ext = "png"
-                if "jpeg" in content_type or "jpg" in content_type:
-                    ext = "jpg"
-                elif "webp" in content_type:
-                    ext = "webp"
-                save_name = f"{uuid.uuid4()}.{ext}"
-                save_path = os.path.join(UPLOAD_DIR, save_name)
-                with open(save_path, "wb") as f:
-                    f.write(response.content)
-        
+                f.write(response.content)
+
         with open(IMAGES_DB, "r", encoding="utf-8") as f:
             images = json.load(f)
-        
+
         images.append({
             "id": save_name,
             "tag": tag,
             "url": f"/uploads/{save_name}",
             "uploaded_at": time.strftime("%Y-%m-%d %H:%M:%S")
         })
-        
+
         with open(IMAGES_DB, "w", encoding="utf-8") as f:
             json.dump(images, f, ensure_ascii=False, indent=2)
-        
+
         return {"success": True, "image_url": f"/uploads/{save_name}", "id": save_name}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
 @app.get("/list_images")
 async def list_images(tag: str = ""):
     """查看图片列表，可按标签筛选"""
     try:
         with open(IMAGES_DB, "r", encoding="utf-8") as f:
             images = json.load(f)
-        
+
         if tag:
             images = [img for img in images if img.get("tag") == tag]
-        
+
         for img in images:
             img["full_url"] = f"https://ppt-generator-production-a9fd.up.railway.app{img['url']}"
-        
+
         return {"success": True, "images": images, "count": len(images)}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
 @app.get("/uploads/{filename}")
 async def get_uploaded_file(filename: str):
     """访问上传的图片"""
@@ -211,7 +210,19 @@ async def get_uploaded_file(filename: str):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(filepath)
-    
+
+
+@app.get("/cleanup")
+def cleanup():
+    """重置图片数据库"""
+    try:
+        with open(IMAGES_DB, "w", encoding="utf-8") as f:
+            json.dump([], f)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/")
 def root():
     return {"status": "running"}
