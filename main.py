@@ -211,6 +211,7 @@ async def get_uploaded_file(filename: str):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(filepath)
+    
 @app.get("/")
 def root():
     return {"status": "running"}
