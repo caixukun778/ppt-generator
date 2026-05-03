@@ -138,35 +138,54 @@ if not os.path.exists(IMAGES_DB):
     with open(IMAGES_DB, "w", encoding="utf-8") as f:
         json.dump([], f)
 
-
 @app.post("/upload_image")
 async def upload_image(request: Request):
-    """上传图片：接收JSON中的图片链接并下载保存"""
+    """上传图片：支持直接传文件或传图片链接"""
     try:
-        data = await request.json()
-        image_url = data.get("image_url") or data.get("file")
-        tag = data.get("tag", "")
+        content_type = request.headers.get("content-type", "")
 
-        if not image_url:
-            return {"success": False, "error": "请在 image_url 参数中提供图片链接"}
+        # 1. 先尝试按文件上传处理（multipart/form-data）
+        if "multipart" in content_type:
+            form = await request.form()
+            file = form.get("file")
+            tag = form.get("tag", "")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(image_url)
-            if response.status_code != 200:
-                return {"success": False, "error": f"下载图片失败，状态码: {response.status_code}"}
+            if file and hasattr(file, "filename"):
+                ext = file.filename.split(".")[-1] if "." in file.filename else "png"
+                save_name = f"{uuid.uuid4()}.{ext}"
+                save_path = os.path.join(UPLOAD_DIR, save_name)
+                with open(save_path, "wb") as f:
+                    f.write(await file.read())
+            else:
+                return {"success": False, "error": "未提供有效的图片文件"}
 
-            content_type = response.headers.get("content-type", "")
-            ext = "png"
-            if "jpeg" in content_type or "jpg" in content_type:
-                ext = "jpg"
-            elif "webp" in content_type:
-                ext = "webp"
+        # 2. 否则按 JSON 链接上传处理
+        else:
+            data = await request.json()
+            image_url = data.get("image_url") or data.get("file")
+            tag = data.get("tag", "")
 
-            save_name = f"{uuid.uuid4()}.{ext}"
-            save_path = os.path.join(UPLOAD_DIR, save_name)
-            with open(save_path, "wb") as f:
-                f.write(response.content)
+            if not image_url:
+                return {"success": False, "error": "请在 image_url 参数中提供图片链接"}
 
+            async with httpx.AsyncClient() as client:
+                response = await client.get(image_url)
+                if response.status_code != 200:
+                    return {"success": False, "error": f"下载图片失败，状态码: {response.status_code}"}
+
+                content_type = response.headers.get("content-type", "")
+                ext = "png"
+                if "jpeg" in content_type or "jpg" in content_type:
+                    ext = "jpg"
+                elif "webp" in content_type:
+                    ext = "webp"
+
+                save_name = f"{uuid.uuid4()}.{ext}"
+                save_path = os.path.join(UPLOAD_DIR, save_name)
+                with open(save_path, "wb") as f:
+                    f.write(response.content)
+
+        # 3. 保存记录
         with open(IMAGES_DB, "r", encoding="utf-8") as f:
             images = json.load(f)
 
@@ -181,6 +200,7 @@ async def upload_image(request: Request):
             json.dump(images, f, ensure_ascii=False, indent=2)
 
         return {"success": True, "image_url": f"/uploads/{save_name}", "id": save_name}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
