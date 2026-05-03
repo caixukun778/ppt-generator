@@ -143,46 +143,35 @@ import httpx  # 需要新增这个导入，用于下载链接
 async def upload_image(request: Request, tag: str = ""):
     """上传图片，支持直接传文件或传图片链接"""
     try:
-        # 1. 尝试获取上传的文件
         form = await request.form()
         file = form.get("file")
         
         if file and hasattr(file, "filename"):
-            # 是直接上传的文件
             ext = file.filename.split(".")[-1] if "." in file.filename else "png"
             save_name = f"{uuid.uuid4()}.{ext}"
             save_path = os.path.join(UPLOAD_DIR, save_name)
             with open(save_path, "wb") as f:
                 f.write(await file.read())
-        
         else:
-            # 2. 如果没有文件，尝试从 JSON 中获取链接
             data = await request.json()
             image_url = data.get("file") or data.get("image_url")
-            
             if not image_url:
                 return {"success": False, "error": "未提供图片文件或链接"}
-            
-            # 下载链接中的图片
             async with httpx.AsyncClient() as client:
                 response = await client.get(image_url)
                 if response.status_code != 200:
                     return {"success": False, "error": f"下载图片失败，状态码: {response.status_code}"}
-                
-                # 推断扩展名
                 content_type = response.headers.get("content-type", "")
                 ext = "png"
                 if "jpeg" in content_type or "jpg" in content_type:
                     ext = "jpg"
                 elif "webp" in content_type:
                     ext = "webp"
-                
                 save_name = f"{uuid.uuid4()}.{ext}"
                 save_path = os.path.join(UPLOAD_DIR, save_name)
                 with open(save_path, "wb") as f:
                     f.write(response.content)
         
-        # 3. 记录到数据库
         with open(IMAGES_DB, "r", encoding="utf-8") as f:
             images = json.load(f)
         
@@ -197,10 +186,9 @@ async def upload_image(request: Request, tag: str = ""):
             json.dump(images, f, ensure_ascii=False, indent=2)
         
         return {"success": True, "image_url": f"/uploads/{save_name}", "id": save_name}
-        
     except Exception as e:
         return {"success": False, "error": str(e)}
-
+        
 @app.get("/list_images")
 async def list_images(tag: str = ""):
     """查看图片列表，可按标签筛选"""
@@ -217,16 +205,22 @@ async def list_images(tag: str = ""):
         return {"success": True, "images": images, "count": len(images)}
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-
-@app.get("/uploads/{filename}")
-async def get_uploaded_file(filename: str):
-    """访问上传的图片"""
-    filepath = os.path.join(UPLOAD_DIR, filename)
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="Image not found")
-    return FileResponse(filepath)
-    
+@app.get("/list_images")
+async def list_images(tag: str = ""):
+    """查看图片列表，可按标签筛选"""
+    try:
+        with open(IMAGES_DB, "r", encoding="utf-8") as f:
+            images = json.load(f)
+        
+        if tag:
+            images = [img for img in images if img.get("tag") == tag]
+        
+        for img in images:
+            img["full_url"] = f"https://ppt-generator-production-a9fd.up.railway.app{img['url']}"
+        
+        return {"success": True, "images": images, "count": len(images)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 @app.get("/")
 def root():
     return {"status": "running"}
