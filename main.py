@@ -128,11 +128,13 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
             left_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(6.5), Inches(5))
             left_tf = left_box.text_frame
             left_tf.word_wrap = True
+            left_tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
             # 右栏：图表/案例卡片
             right_box = slide.shapes.add_textbox(Inches(7.5), Inches(1.8), Inches(5.5), Inches(5))
             right_tf = right_box.text_frame
             right_tf.word_wrap = True
+            right_tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
             blocks = slide_data.get("blocks", [])
             has_right_content = False
