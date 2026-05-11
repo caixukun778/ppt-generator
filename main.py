@@ -36,19 +36,16 @@ def get_color(name: str) -> RGBColor:
 
 # ========== PPT 生成核心 ==========
 def build_pptx(title: str, style_desc: str, slides_json_str: str):
-    """生成 PPT，并内建专业排版规则"""
+    """生成 PPT，并内建专业排版规则（含自动缩放）"""
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    # 1. 解析风格
     primary_color = get_color(style_desc)
-    accent_color = get_color(style_desc)  # 可扩展
+    accent_color = get_color(style_desc)
 
-    # 2. 解析内容
     slides_data = []
     try:
-        # 清洗可能的 markdown 标记
         cleaned = slides_json_str.strip()
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:]
@@ -60,55 +57,49 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
     except:
         slides_data = [{"title": title, "type": "content", "blocks": [{"heading": "内容生成中", "bullets": ["请稍后重试"]}]}]
 
-    # 3. 逐页生成，应用排版规则
     for slide_data in slides_data:
         slide_type = slide_data.get("type", "content")
 
         if slide_type == "cover":
-            # ---------- 封面排版 ----------
-            slide_layout = prs.slide_layouts[6]  # 空白版式
+            slide_layout = prs.slide_layouts[6]
             slide = prs.slides.add_slide(slide_layout)
 
-            # 全屏背景色
             bg = slide.background
             bg.fill.solid()
             bg.fill.fore_color.rgb = primary_color
 
-            # 大标题（居中）
             txBox = slide.shapes.add_textbox(Inches(1.5), Inches(2.5), Inches(10), Inches(2))
             tf = txBox.text_frame
-            p = tf.paragraphs[0]
             tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+            p = tf.paragraphs[0]
             p.text = slide_data.get("title", title)
             p.font.size = Pt(48)
             p.font.bold = True
             p.font.color.rgb = RGBColor(255, 255, 255)
             p.alignment = PP_ALIGN.CENTER
 
-            # 副标题（下对齐）
             sub = slide_data.get("subtitle", "")
             if sub:
                 txBox2 = slide.shapes.add_textbox(Inches(1.5), Inches(5), Inches(10), Inches(1.2))
                 tf2 = txBox2.text_frame
-                p2 = tf2.paragraphs[0]
                 tf2.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+                p2 = tf2.paragraphs[0]
                 p2.text = sub
                 p2.font.size = Pt(24)
                 p2.font.color.rgb = RGBColor(220, 220, 220)
                 p2.alignment = PP_ALIGN.CENTER
 
         elif slide_type == "toc":
-            # ---------- 目录排版 ----------
-            slide_layout = prs.slide_layouts[1]  # 标题+内容
+            slide_layout = prs.slide_layouts[1]
             slide = prs.slides.add_slide(slide_layout)
             slide.shapes.title.text = slide_data.get("title", "目录")
 
             body = slide.shapes.placeholders[1].text_frame
-            body.clear()body.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+            body.clear()
+            body.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
             items = slide_data.get("items", [])
             for i, item in enumerate(items):
                 p = body.add_paragraph()
-                # 自动识别图表/案例标签，增加视觉区分
                 if "📊" in item or "💡" in item:
                     p.text = f"    {item}"
                     p.font.color.rgb = accent_color
@@ -119,18 +110,15 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
                 p.space_after = Pt(10)
 
         else:
-            # ---------- 内容页排版（左右分栏） ----------
             slide_layout = prs.slide_layouts[1]
             slide = prs.slides.add_slide(slide_layout)
             slide.shapes.title.text = slide_data.get("title", "内容")
 
-            # 左栏：文字要点
             left_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(6.5), Inches(5))
             left_tf = left_box.text_frame
             left_tf.word_wrap = True
             left_tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
-            # 右栏：图表/案例卡片
             right_box = slide.shapes.add_textbox(Inches(7.5), Inches(1.8), Inches(5.5), Inches(5))
             right_tf = right_box.text_frame
             right_tf.word_wrap = True
@@ -143,7 +131,6 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
                 heading = block.get("heading", "")
                 bullets = block.get("bullets", [])
 
-                # 如果是图表建议或案例，放进右栏
                 if "📊" in heading or "💡" in heading:
                     p = right_tf.add_paragraph()
                     p.text = heading
@@ -158,7 +145,6 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
                         p2.space_after = Pt(6)
                     has_right_content = True
                 else:
-                    # 普通文字块放进左栏
                     p = left_tf.add_paragraph()
                     p.text = heading
                     p.font.size = Pt(20)
@@ -170,7 +156,6 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
                         p2.font.size = Pt(16)
                         p2.space_after = Pt(4)
 
-            # 如果没有右栏内容，给右栏一个提示
             if not has_right_content:
                 p = right_tf.add_paragraph()
                 p.text = "📌 建议在此补充图表或案例"
@@ -178,12 +163,10 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
                 p.font.italic = True
                 p.font.color.rgb = RGBColor(150, 150, 150)
 
-    # 4. 保存文件
     filename = f"{uuid.uuid4()}.pptx"
     filepath = os.path.join(OUTPUT_DIR, filename)
     prs.save(filepath)
     return filepath, filename
-
 @app.post("/generate_pptx")
 async def generate_pptx(request: Request):
     try:
