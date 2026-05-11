@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_AUTO_SIZE
 from pptx.dml.color import RGBColor
 
 app = FastAPI()
