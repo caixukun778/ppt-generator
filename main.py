@@ -78,6 +78,7 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
             txBox = slide.shapes.add_textbox(Inches(1.5), Inches(2.5), Inches(10), Inches(2))
             tf = txBox.text_frame
             p = tf.paragraphs[0]
+            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
             p.text = slide_data.get("title", title)
             p.font.size = Pt(48)
             p.font.bold = True
@@ -90,6 +91,7 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
                 txBox2 = slide.shapes.add_textbox(Inches(1.5), Inches(5), Inches(10), Inches(1.2))
                 tf2 = txBox2.text_frame
                 p2 = tf2.paragraphs[0]
+                tf2.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
                 p2.text = sub
                 p2.font.size = Pt(24)
                 p2.font.color.rgb = RGBColor(220, 220, 220)
