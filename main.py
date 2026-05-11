@@ -104,7 +104,7 @@ def build_pptx(title: str, style_desc: str, slides_json_str: str):
             slide.shapes.title.text = slide_data.get("title", "目录")
 
             body = slide.shapes.placeholders[1].text_frame
-            body.clear()
+            body.clear()body.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
             items = slide_data.get("items", [])
             for i, item in enumerate(items):
                 p = body.add_paragraph()
